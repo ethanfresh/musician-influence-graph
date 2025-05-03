@@ -1,19 +1,11 @@
 mod graph;
-mod dijkstra;
-mod centrality;
+mod community;
 
 use graph::Graph;
-use centrality::compute_centrality;
+use community::{find_communities, print_top_communities};
 
 fn main() {
-    let graph = Graph::from_csv("data/artists.csv");
-
-    println!("Graph loaded with {} nodes.", graph.node_count());
-
-    let centrality_scores = compute_centrality(&graph);
-
-    println!("Top 10 high-priority artists for labeling:");
-    for (artist, score) in centrality_scores.iter().take(10) {
-        println!("{:<30} | Centrality: {:.4}", artist, score);
-    }
+    let graph = Graph::from_csv("../wikidata_with_lengths_cleaned.csv");
+    let communities = find_communities(&graph);
+    print_top_communities(&graph, &communities, 5);
 }

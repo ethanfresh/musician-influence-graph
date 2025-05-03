@@ -1,40 +1,84 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::BufReader;
-use csv::Reader;
+use std::io::{BufRead, BufReader};
 
 pub struct Graph {
-    pub adjacency_list: HashMap<String, Vec<(String, f32)>>,
+    pub edges: HashMap<String, Vec<(String, f64)>>,
+    pub genre_by_artist: HashMap<String, String>,
+    pub lengths_by_artist: HashMap<String, f64>,
 }
 
 impl Graph {
     pub fn new() -> Self {
-        Graph { adjacency_list: HashMap::new() }
+        Self {
+            edges: HashMap::new(),
+            genre_by_artist: HashMap::new(),
+            lengths_by_artist: HashMap::new(),
+        }
     }
 
-    pub fn from_csv(path: &str) -> Self {
-        let mut graph = Graph::new();
-        let file = File::open(path).expect("Could not open file");
-        let mut rdr = Reader::from_reader(BufReader::new(file));
+    pub fn from_csv(filename: &str) -> Self {
+        let file = File::open(filename).expect("Cannot open file");
+        let reader = BufReader::new(file);
 
-        for result in rdr.records() {
-            let record = result.expect("Failed to read record");
-            let from = record[0].to_string();
-            let to = record[1].to_string();
-            let weight: f32 = record[2].parse().unwrap_or(1.0);
+        let mut artist_to_genres: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut genre_lengths: HashMap<String, f64> = HashMap::new();
+        let mut lengths_by_artist: HashMap<String, f64> = HashMap::new();
+        let mut genre_by_artist: HashMap<String, String> = HashMap::new();
+        let mut lines = reader.lines();
+        lines.next();
 
-            graph.adjacency_list.entry(from.clone()).or_default().push((to.clone(), weight));
-            graph.adjacency_list.entry(to).or_default().push((from, weight)); // undirected
+        for line in lines.flatten() {
+            let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+            if parts.len() < 4 {
+                continue;
+            }
+
+            let artist = parts[0].to_string(); // artistLabel
+            let genre = parts[1].to_string();  // genreLabel
+            let length: f64 = parts[3].parse().unwrap_or(0.0); // length
+
+            if artist.is_empty() || genre.is_empty() || length == 0.0 {
+                continue;
+            }
+
+            artist_to_genres.entry(artist.clone()).or_default().insert(genre.clone());
+            genre_lengths.entry(genre.clone()).or_insert(length);
+            genre_by_artist.insert(artist.clone(), genre);
+            lengths_by_artist.insert(artist.clone(), length);
+        }
+
+        let mut graph = Graph {
+            edges: HashMap::new(),
+            genre_by_artist,
+            lengths_by_artist,
+        };
+
+        let mut genre_to_artists: HashMap<String, Vec<String>> = HashMap::new();
+
+        for (artist, genres) in &artist_to_genres {
+            for genre in genres {
+                genre_to_artists.entry(genre.clone()).or_default().push(artist.clone());
+            }
+        }
+
+        for (genre, artists) in genre_to_artists {
+            if let Some(&length) = genre_lengths.get(&genre) {
+                for i in 0..artists.len() {
+                    for j in (i + 1)..artists.len() {
+                        let a1 = &artists[i];
+                        let a2 = &artists[j];
+                        graph.edges.entry(a1.clone()).or_default().push((a2.clone(), length));
+                        graph.edges.entry(a2.clone()).or_default().push((a1.clone(), length));
+                    }
+                }
+            }
         }
 
         graph
     }
 
-    pub fn node_count(&self) -> usize {
-        self.adjacency_list.len()
-    }
-
-    pub fn neighbors(&self, node: &str) -> Option<&Vec<(String, f32)>> {
-        self.adjacency_list.get(node)
+    pub fn is_artist(&self, node: &str) -> bool {
+        self.edges.contains_key(node)
     }
 }
