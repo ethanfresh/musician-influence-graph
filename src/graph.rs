@@ -1,84 +1,101 @@
-use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::collections::HashMap;
+use csv::ReaderBuilder;
 
 pub struct Graph {
     pub edges: HashMap<String, Vec<(String, f64)>>,
-    pub genre_by_artist: HashMap<String, String>,
     pub lengths_by_artist: HashMap<String, f64>,
+    pub genre_by_artist: HashMap<String, Vec<String>>,
 }
 
 impl Graph {
     pub fn new() -> Self {
-        Self {
+        Graph {
             edges: HashMap::new(),
-            genre_by_artist: HashMap::new(),
             lengths_by_artist: HashMap::new(),
+            genre_by_artist: HashMap::new(),
         }
     }
 
-    pub fn from_csv(filename: &str) -> Self {
-        let file = File::open(filename).expect("Cannot open file");
-        let reader = BufReader::new(file);
+    pub fn load_from_csv(path: &str) -> Self {
+        let mut graph = Graph::new();
+        let mut rdr = ReaderBuilder::new()
+            .has_headers(true)
+            .from_path(path)
+            .expect("Cannot read CSV file");
 
-        let mut artist_to_genres: HashMap<String, HashSet<String>> = HashMap::new();
-        let mut genre_lengths: HashMap<String, f64> = HashMap::new();
-        let mut lengths_by_artist: HashMap<String, f64> = HashMap::new();
-        let mut genre_by_artist: HashMap<String, String> = HashMap::new();
-        let mut lines = reader.lines();
-        lines.next();
+        let mut artists = Vec::new();
 
-        for line in lines.flatten() {
-            let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-            if parts.len() < 4 {
+        for result in rdr.records() {
+            let record = result.expect("Error reading record");
+            let artist = record.get(0).unwrap_or("").trim().to_string();
+            let genres_str = record.get(1).unwrap_or("").trim();
+            let length: f64 = record.get(2).unwrap_or("0").parse().unwrap_or(0.0);
+
+            if artist.is_empty() || length <= 0.0 {
                 continue;
             }
 
-            let artist = parts[0].to_string(); // artistLabel
-            let genre = parts[1].to_string();  // genreLabel
-            let length: f64 = parts[3].parse().unwrap_or(0.0); // length
+            let genres: Vec<String> = genres_str
+                .trim_matches(|c| c == '[' || c == ']')
+                .split(',')
+                .map(|s| s.trim().trim_matches('\'').to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
 
-            if artist.is_empty() || genre.is_empty() || length == 0.0 {
-                continue;
+            graph.lengths_by_artist.insert(artist.clone(), length);
+
+            for genre in &genres {
+                graph.edges.entry(artist.clone()).or_default().push((genre.clone(), 1.0));
+                graph.edges.entry(genre.clone()).or_default().push((artist.clone(), 1.0));
             }
 
-            artist_to_genres.entry(artist.clone()).or_default().insert(genre.clone());
-            genre_lengths.entry(genre.clone()).or_insert(length);
-            genre_by_artist.insert(artist.clone(), genre);
-            lengths_by_artist.insert(artist.clone(), length);
+            graph.genre_by_artist.insert(artist.clone(), genres);
+            artists.push(artist);
         }
 
-        let mut graph = Graph {
-            edges: HashMap::new(),
-            genre_by_artist,
-            lengths_by_artist,
-        };
+        // Connect artists who share at least 1 genre
+        let mut link_count = 0;
+        for i in 0..artists.len() {
+            for j in (i + 1)..artists.len() {
+                let a1 = &artists[i];
+                let a2 = &artists[j];
 
-        let mut genre_to_artists: HashMap<String, Vec<String>> = HashMap::new();
-
-        for (artist, genres) in &artist_to_genres {
-            for genre in genres {
-                genre_to_artists.entry(genre.clone()).or_default().push(artist.clone());
-            }
-        }
-
-        for (genre, artists) in genre_to_artists {
-            if let Some(&length) = genre_lengths.get(&genre) {
-                for i in 0..artists.len() {
-                    for j in (i + 1)..artists.len() {
-                        let a1 = &artists[i];
-                        let a2 = &artists[j];
-                        graph.edges.entry(a1.clone()).or_default().push((a2.clone(), length));
-                        graph.edges.entry(a2.clone()).or_default().push((a1.clone(), length));
+                let g1_vec_owned;
+                let g2_vec_owned;
+                let g1_vec = match graph.genre_by_artist.get(a1) {
+                    Some(v) => v,
+                    None => {
+                        g1_vec_owned = Vec::new();
+                        &g1_vec_owned
                     }
+                };
+                let g2_vec = match graph.genre_by_artist.get(a2) {
+                    Some(v) => v,
+                    None => {
+                        g2_vec_owned = Vec::new();
+                        &g2_vec_owned
+                    }
+                };
+
+                let shared = g1_vec.iter().filter(|g| g2_vec.contains(g)).count();
+                if shared >= 1 {
+                    graph.edges.entry(a1.clone()).or_default().push((a2.clone(), shared as f64));
+                    graph.edges.entry(a2.clone()).or_default().push((a1.clone(), shared as f64));
+                    link_count += 1;
                 }
             }
         }
+
+        println!("Total artist-artist links created: {}", link_count);
 
         graph
     }
 
     pub fn is_artist(&self, node: &str) -> bool {
-        self.edges.contains_key(node)
+        self.lengths_by_artist.contains_key(node)
+    }
+
+    pub fn get_genres(&self, artist: &str) -> Vec<String> {
+        self.genre_by_artist.get(artist).cloned().unwrap_or_default()
     }
 }
